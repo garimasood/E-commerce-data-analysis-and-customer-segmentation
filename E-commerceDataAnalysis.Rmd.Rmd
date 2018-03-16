@@ -1,0 +1,397 @@
+---
+title: "E-Commerce Data Analytics"
+author: "GarimaSood"
+date: "February 5, 2018"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r}
+library(ggplot2)
+library(lubridate)
+library(stringr)
+library(tm)
+library(plotly)
+
+dataPath <- "C:/Users/garim/Documents/New Folder"
+data <- read.csv(paste(dataPath,"data_science_analytics_2018_data.csv", sep = "/"))
+
+#Preliminary data check
+
+str(data)
+```
+
+```{r}
+summary(data)
+```
+
+```{r}
+length(unique(data$StockCode[data$Country=="United Kingdom"]))
+```
+
+```{r}
+length(unique(data$CustomerID[data$Country=="United Kingdom"]))
+```
+
+```{r}
+length(unique(data$InvoiceNo[data$Country=="United Kingdom"]))
+```
+
+```{r}
+data[data$Quantity > 80000 | data$Quantity< -80000,]
+data[data$UnitPrice > 35000 | data$UnitPrice< 0,]
+```
+
+```{r}
+countrysplit <- as.data.frame(table(data$Country))
+countrysplit
+```
+
+# Cleaning data for noise i.e. negative quantity orders/ adjustments, zero unit price orders and outliers in terms of quantity & price
+```{r}
+data$cancel <- ifelse(grepl("C", data$InvoiceNo), 1,0)
+data$post <- ifelse(data$StockCode =="POST"|data$StockCode=="DOT",1,0)
+data$sample <- ifelse(data$StockCode =="S", 1,0)
+data$charges <- ifelse(data$StockCode=="BANK CHARGES",1,0)
+data$cust_trans <- ifelse(data$sample+data$charges+data$post==0,1,0)
+
+data$sale <- data$Quantity*data$UnitPrice
+```
+Percentage of money spent on shipping
+```{r}
+sum(data$sale[data$post==1])/sum(data$sale[data$cust_trans==1])
+```
+Outliering based on 3 Standard deviations on unit price and quantity fields:
+```{r}
+sd_quantity <- sqrt(var(data$Quantity))
+mean_quantity <- mean(data$Quantity)
+UL_quantity <- mean_quantity+3*sd_quantity
+LL_quantity <- mean_quantity-3*sd_quantity
+
+sd_UP <- sqrt(var(data$UnitPrice))
+mean_UP <- mean(data$UnitPrice)
+UL_UP <- mean_UP+3*sd_UP
+LL_UP <- mean_UP-3*sd_UP
+
+data_filt <- data[(data$Quantity>LL_quantity),]
+data_filt <- data_filt[(data_filt$Quantity<UL_quantity),]
+data_filt <- data_filt[(data_filt$UnitPrice<UL_UP),]
+data_filt <- data_filt[(data_filt$UnitPrice>LL_UP),]
+data_filt$Country1 <- ifelse(data_filt$Country=="United Kingdom", "UK", as.character(data_filt$Country))
+
+
+min(data_filt$UnitPrice)
+```
+```{r}
+data_filt$sale = data_filt$Quantity*data_filt$UnitPrice
+total_sale = sum(data_filt$sale)
+```
+Number of NAs in data
+```{r}
+lapply(data_filt, function(x) sum(is.na(x)))
+```
+Extract month from datetime
+```{r}
+data_filt$date = paste(substr(months(as.Date(data_filt$InvoiceDate, format = "%m/%d/%Y")),1,3),substr(as.Date(data_filt$InvoiceDate, format = "%m/%d/%Y"),3,4),sep = "-")
+```
+
+# Net Transaction data analysis
+
+a) Transactions by month
+```{r}
+trans <- aggregate(data_filt$sale, by = list(data_filt$date),sum)
+trans$x <- trans$x/1000000
+size_date <- data.frame(table(data_filt$date))
+trans_date <- merge(trans,size_date, by.x ="Group.1", by.y= "Var1")
+
+
+order <- c("Dec-10","Jan-11", "Feb-11", "Mar-11", "Apr-11", "May-11", "Jun-11", "Jul-11", "Aug-11", "Sep-11", "Oct-11", "Nov-11", "Dec-11" )
+
+ggplot(data = trans_date) + 
+  geom_col(mapping = aes(x = Group.1, y = x), width=0.5, fill = "blue")+  ylim(0,1.5) + 
+  labs(x="Month", y="Net transaction ($ Million)", title = "Net Transaction per Month")+
+  scale_x_discrete(limits=order)
+  
+```
+b) Transactions by country (Top 10)
+```{r}
+
+trans_country <- aggregate(data_filt$sale, by = list(data_filt$Country1),sum)
+trans_country$x = trans_country$x/1000000
+size_country <- data.frame(table(data_filt$Country1))
+trans_country <- merge(trans_country,size_country, by.x ="Group.1", by.y= "Var1")
+trans_country <- trans_country[order(-trans_country$x),]
+
+
+ggplot(data = trans_country[1:10,]) + 
+  geom_col(mapping = aes(x = Group.1, y = x), fill = "dark green", width = 0.5)+   
+  labs(x="Country", y="Net transaction ($ Million)", title = "Net Transaction by Country") +
+  scale_x_discrete(limits=trans_country$Group.1[1:10])
+```
+
+# Sales data analysis (exclude postage, bank charges and free samples)
+
+a) Sales by month
+```{r}
+sales_data <- data_filt[data_filt$cust_trans==1,]
+
+sales <- aggregate(sales_data$sale, by = list(sales_data$date),sum)
+sales$x <- sales$x/1000000
+size_date <- data.frame(table(sales_data$date))
+sales_date <- merge(sales,size_date, by.x ="Group.1", by.y= "Var1")
+
+
+ggplot(data = sales_date) + 
+  geom_col(mapping = aes(x = Group.1, y = x), width=0.5, fill = "blue")+  ylim(0,1.5) + 
+  labs(x="Month", y="Net product sale ($ Million)", title = "Net Product Sale per Month")+
+  scale_x_discrete(limits=order)
+```
+
+b) Sales by Country
+```{r}
+sales_country <- aggregate(sales_data$sale, by = list(sales_data$Country1),sum)
+sales_country$x <- sales_country$x/1000000
+size_country <- data.frame(table(sales_data$Country1))
+sales_country <- merge(sales_country,size_country, by.x ="Group.1", by.y= "Var1")
+sales_country <- sales_country[order(-sales_country$x),]
+
+
+ggplot(data = sales_country[1:10,]) + 
+  geom_col(mapping = aes(x = Group.1, y = x), fill = "dark green", width = 0.5)+ 
+  labs(x="Country", y="Net product sale ($ Million)", title = "Net Product Sale by Country")+
+  scale_x_discrete(limits=sales_country$Group.1[1:10])
+```
+# Cancellation data analysis
+
+```{r}
+c_data_filt <- data_filt[(data_filt$cancel*data_filt$cust_trans)==1,]
+
+cancellation <- aggregate(c_data_filt$sale*-1, by = list(c_data_filt$date),sum)
+cancellation$Var1 = cancellation$Group.1
+size_date <- data.frame(table(c_data_filt$date))
+
+overall_cancel <- merge(cancellation[,c(2:3)],size_date, by.x ="Var1", by.y= "Var1")
+
+```
+a) Cancellations by month
+```{r}
+ggplot(data = overall_cancel) + 
+  geom_point (mapping = aes(x = Var1, y = x, colour = "red", size = Freq))+ labs(x="Month", y="Cancellation.Amount ($)", title = "Cancellation Amount and Freq by Month")+
+  scale_x_discrete(limits=order) 
+```
+```{r}
+cancel_country <- aggregate(c_data_filt$sale*-1, by = list(c_data_filt$Country1),sum)
+size_country <- data.frame(table(c_data_filt$Country1))
+cancel_country <- merge(cancel_country,size_country, by.x ="Group.1", by.y= "Var1")
+cancel_country <- cancel_country[order(-cancel_country$x),]
+
+
+ggplot(data = cancel_country[1:10,]) + 
+  geom_point (mapping = aes(x = Group.1, y = x, colour = "red", size = Freq))+ 
+  labs(x="Country", y="Cancellation.Amount ($)", title = "Cancellation Amount and Freq by Country")
+# + scale_x_discrete(limits=country) 
+```
+# Dependence between quantity ordered and unit price per product
+```{r}
+plot(data_filt$Quantity, data_filt$UnitPrice)
+```
+
+# Leading products in the market
+```{r}
+prod_sale_freq <- as.data.frame(table(data_filt$StockCode))
+prod_sale <- aggregate(data_filt[,c(4,14)], by = list(data_filt$StockCode), sum)
+unitP <- aggregate(data_filt[,6], by = list(data_filt$StockCode), mean)
+write.csv(prod_sale,file = paste(dataPath,"prod_sale.csv", sep = "/"))
+write.csv(unitP,file = paste(dataPath,"unitP.csv", sep = "/"))
+```
+
+# Traffic and sale by time of the day
+```{r}
+data_filt$hr_min <- hour(mdy_hm(data_filt$InvoiceDate))+ (minute(mdy_hm(data_filt$InvoiceDate))/60)
+
+time_split <- as.data.frame(table(data_filt$hr_min), rownames = TRUE)
+write.csv(time_split, paste(dataPath, "time_split.csv", sep = "/"))
+```
+Traffic by time of the day
+```{r}
+plot(aggregate(data_filt$sale, by = list(data_filt$hr_min), sum), type = 'p', col = "green", xlab = "Time of the day", ylab = "Sale in $")
+```
+
+Sale by time of the day
+```{r}
+plot(time_split, type = "p", xlab = "Time of the day", ylab = "Number of transactions")
+```
+# Analysis of United Kingdom data
+
+```{r}
+dat_uk <- data_filt[data_filt$Country1=="UK",]
+nrow(dat_uk)
+
+#dat_uk$keyw <- strsplit(as.character(dat_uk$Description)," ")
+#word_list <- unique(unlist(dat_uk$keyw))
+#write.csv(word_list, file = paste(dataPath,"desc_words.csv", sep = "/"))
+#word_list <- VCorpus(DirSource(paste(dataPath,"texts", sep = "/")))
+#word_list <-  tm_map(word_list, removeWords, stopwords("english")) 
+#word_list <-  tm_map(word_list, stripWhitespace) 
+#writeCorpus(word_list, path=paste(dataPath,"texts", sep = "/"))
+
+
+shipping_cost <- sum(dat_uk$sale[dat_uk$post==1])
+bank_charges <- sum(dat_uk$sale[dat_uk$charges ==1] )
+cust_transactions <- sum(dat_uk$sale[dat_uk$cust_trans ==1])
+canceled_trans <- sum(dat_uk$sale[(dat_uk$cancel ==1)*(dat_uk$cust_trans==1)])
+```
+
+# Net transaction by month of the year
+```{r}
+transuk <- aggregate(dat_uk$sale, by = list(dat_uk$date),sum)
+transuk$x <- transuk$x/1000000
+size_date <- data.frame(table(dat_uk$date))
+transuk_date <- merge(transuk,size_date, by.x ="Group.1", by.y= "Var1")
+```
+
+#Cancellations by month of the year
+```{r}
+cancel_uk <- dat_uk[dat_uk$cancel==1,]
+canceluk <- aggregate(cancel_uk$sale*-1, by = list(cancel_uk$date),sum)
+canceluk$x <- canceluk$x/1000000
+size_date <- data.frame(table(cancel_uk$date))
+canceluk_date <- merge(canceluk,size_date, by.x ="Group.1", by.y= "Var1")
+```
+
+# plot of Tranctions (green) and cancelation (red) amount
+```{r}
+ggplot(data = transuk_date) + 
+  geom_col(mapping = aes(x = Group.1, y = x),  fill = "green")+  ylim(0,1.3) + 
+  labs(x="Month", y="Net transaction ($ Million)", title = "Net Transaction per Month UK", show.legend= TRUE)+
+  scale_x_discrete(limits=order) +
+  geom_col(data = canceluk_date, mapping = aes(x = Group.1, y = x), fill = "red", show.legend = TRUE)
+  
+```
+
+#Clustering of data for UK
+
+ 1) Aggregate records by customer ID
+```{r}
+datclus_uk <- aggregate(dat_uk[c(4,9,13,14)], by = list(dat_uk$CustomerID), sum)
+up <- aggregate(dat_uk[c(6)], by = list(dat_uk$CustomerID), mean)
+datclus_uk <- merge(datclus_uk, up, by = "Group.1")
+```
+  2) Remove outliers (if any) because kmeans clustering technique does not ignore outliers and can bias the results
+```{r}
+sd_qt <- sqrt(var(datclus_uk$Quantity))
+mean_qt <- mean(datclus_uk$Quantity)
+UL_qt <- mean_qt+3*sd_qt
+LL_qt <- mean_qt-3*sd_qt
+datclus_uk<- datclus_uk[datclus_uk$Quantity<UL_qt,]
+datclus_uk<- datclus_uk[datclus_uk$Quantity>LL_qt,]
+```
+ 3) Create a variable "time_int" from InvoiceDate that provides the duration of association of the customer with the website in a  year
+ 
+```{r}
+ab<-split(dat_uk,dat_uk$CustomerID)
+abx <- lapply(ab,function(x){
+  max(as.Date(x$InvoiceDate,"%m/%d/%Y"))-min(as.Date(x$InvoiceDate,"%m/%d/%Y"))
+})
+
+test <- as.matrix(unlist(abx))
+id <- as.data.frame(row.names(test))
+abbd <- cbind(CustomerID = id , time_int=test )
+abbd$Group.1 <- as.character(abbd$`row.names(test)`)
+row.names(abbd)<- c(1:3934)
+abbd <- abbd[,-1]
+
+datclus_uk$Group.1 <- as.character(datclus_uk$Group.1)
+datclus_uk1<- merge(datclus_uk,abbd, by.x= "Group.1", by.y= "Group.1")
+
+
+scaled_uk <- scale(datclus_uk1[c(2,3,4,6,7)])
+```
+ 4) Splitting data into test and train
+```{r}
+smp_size <- floor(0.70 * nrow(scaled_uk))
+
+# set the seed to make partition reproductible
+set.seed(123)
+train_ind <- sample(seq_len(nrow(scaled_uk)), size = smp_size)
+
+train <- scaled_uk[train_ind, ]
+test <- scaled_uk[-train_ind, ] 
+```
+ 5) Clustering of train data with continuos variables: Quantity, unit price, # cancellations, # transactions and duration of affiliation
+ 
+```{r}
+Rsq = c()
+
+for (i in 2:8){
+  assign(paste0("kmean_uk",i), kmeans(train, i, nstart=100, iter.max = 20 ))
+  assign(paste0("rsq",i),  eval(parse(text = paste0("kmean_uk",i,"$betweenss/kmean_uk",i,"$totss"))))
+  Rsq = c(Rsq, eval(parse(text = paste0("rsq",i))))
+  
+  }
+```
+ Scree plot to decide # clusters
+```{r}
+plot(2:8, Rsq, type = "b", main = "Scree plot", xlab = "Number of clusters" ) + grid()
+```
+Scree plot suggests 4 optimal clusters based on the elbow point
+
+Aggregates based on 3 clusters
+```{r}
+cbind(aggregate(datclus_uk1[train_ind,c(2,3,4,6,7,5)], by = list(kmean_uk3$cluster), mean), size=as.matrix(kmean_uk3$size))
+```
+Aggregates based on 4 clusters
+```{r}
+cbind(aggregate(datclus_uk1[train_ind,c(2,3,4,6,7,5)], by = list(kmean_uk4$cluster), mean), size=as.matrix(kmean_uk4$size))
+```
+Aggregates based on 5 clusters
+```{r}
+cbind(aggregate(datclus_uk1[train_ind, c(2,3,4,6,7,5)], by = list(kmean_uk5$cluster), mean), size=as.matrix(kmean_uk5$size))
+```
+
+I will go ahead with 4 cluster design for targeting based on their interpretability, practical use for marketing/ targeting, and cluster sizes
+
+6) Check stability of clusters on test data using centers from train clusters
+```{r}
+kmean_uk_test <- kmeans(test, centers = kmean_uk4$centers, nstart=100, iter.max = 20 )
+Rsq_test <- kmean_uk_test$betweenss/kmean_uk_test$totss
+c(Rsq_train = Rsq[3], Rsq_test = Rsq_test) 
+```
+R square values are close for both test and train data with 4 clusters and same centers
+
+Compare the aggregates for the unscaled test data with train clusters:
+- Test clusters:
+```{r, echo=FALSE}
+cbind(aggregate(datclus_uk1[-train_ind,c(2,6,3,4,7,5)], by = list(kmean_uk_test$cluster), mean), size=as.matrix(kmean_uk_test$size))
+```
+- Train clusters
+```{r,echo= FALSE }
+cbind(aggregate(datclus_uk1[train_ind,c(2,6,3,4,7,5)], by = list(kmean_uk4$cluster), mean), size=as.matrix(kmean_uk4$size))
+```
+```{r}
+round(prop.table(kmean_uk4$size*100),2)
+```
+Interpretation of clusters:
+
+  Cluster 1: "Outliers"- A minute proportion of customers who bought expensive products from the site once or twice 
+ 
+  Cluster 2: "Old loyal customers (Revenue drivers)": Buy a lot of products, frequent shoppers and large average cancellations| Among top 5% based on revenue
+  
+  Cluster 3: "Old selective buyers" - Inclined towards buying less but frequently | Constitute more than a third of the customer base       
+  Cluster 4: "New judicious shoppers" - Buy  products in small quantity, less frequent shopping | Constitute more than half of the customer base 
+ 
+```{r}
+datclus_uk2 <- as.data.frame(cbind(datclus_uk1[train_ind,], kmean_uk3$cluster ))
+
+plot_ly(datclus_uk2, x = ~Quantity, y = ~time_int, color = as.factor(kmean_uk4$cluster) ) %>%
+add_markers() %>% 
+layout(title = 'Consumer clustering for UK', scene = list(xaxis = list(title = 'Quantity'),yaxis = list(title = 'Duration of shopping')))
+
+```
+
+
+
+
+
+
